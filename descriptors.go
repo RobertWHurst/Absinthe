@@ -1,5 +1,7 @@
 package absinthe
 
+import "reflect"
+
 type clientDescriptor struct {
 	name               string
 	handlerDescriptors []handlerDescriptor
@@ -8,8 +10,8 @@ type clientDescriptor struct {
 
 type handlerDescriptor struct {
 	name string
-	in   Type
-	out  Type
+	in   reflect.Type
+	out  reflect.Type
 }
 
 type routeDescriptor struct {

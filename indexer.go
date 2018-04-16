@@ -1,10 +1,9 @@
 package absinthe
 
 type indexer struct {
-	client         *Client
-	isListening    bool
-	remoteHandlers []remoteHandler
-	remoteRoutes   []remoteRoute
+	client      *Client
+	isListening bool
+	peers       []clientDescriptor
 }
 
 func (i *indexer) listenForNewHandlersAndRoutes() {
