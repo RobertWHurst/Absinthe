@@ -128,9 +128,10 @@ type Options struct {
 // GetDefaultOptions returns the default options for absinthe clients
 func GetDefaultOptions() Options {
 	natsOptionDefaults := nats.GetDefaultOptions()
+	interval, _ := time.ParseDuration("5s")
 
 	return Options{
-		IndexingInterval: time.ParseDuration("5s"),
+		IndexingInterval: interval,
 		Namespace:        "absinthe",
 
 		URL:                 natsOptionDefaults.Url,

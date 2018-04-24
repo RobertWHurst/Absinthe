@@ -2,43 +2,52 @@ package absinthe
 
 import (
 	"net/http"
+	"reflect"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/nats-io/go-nats"
 )
 
 // Client manages the connection to Nats, as well as provides methods for
 // binding routes and handlers, and dispatching HTTP requests and RPC calls
 type Client struct {
-	options  Options
-	natsConn *nats.EncodedConn
-	indexer  indexer
+	options    Options
+	natsConn   *nats.EncodedConn
+	indexer    indexer
+	descriptor clientDescriptor
 }
 
 // Connect creates a new Client using the given Nats url, attempts to make a
 // connection, then returns the connected client
-func Connect(name, url string) *Client {
+func Connect(name, version string, url string) *Client {
 	options := GetDefaultOptions()
 	options.Name = name
 	options.URL = url
 
-	c := &Client{options: options}
+	c := &Client{
+		options:    options,
+		descriptor: newClientDescriptor(name, semver.New(version)),
+	}
 	c.connect()
 	return c
 }
 
 // Call calls a RPC handler with the given name and arguments
 func (c *Client) Call(name string, in interface{}, out interface{}) error {
-	if err := c.indexer.validateCall(name, in, out); err != nil {
-		return err
+	inType := reflect.TypeOf(in)
+	outType := reflect.TypeOf(out)
+	if c.indexer.validateCall(name, inType, outType) {
+
 	}
 	// TODO: Call the handler
+	return nil
 }
 
 func (c *Client) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 
 }
 
-func (c *Client) subscribe(subj string, cb nats.MsgHandler) (*nats.Subscription, error) {
+func (c *Client) subscribe(subj string, cb nats.Handler) (*nats.Subscription, error) {
 	return c.natsConn.Subscribe(c.options.Namespace+subj, cb)
 }
 
@@ -58,7 +67,9 @@ func (c *Client) connect() error {
 	}
 
 	c.natsConn = enc
-	c.indexer = indexer{client: c}
+	c.indexer = indexer{
+		client: c,
+	}
 	go c.indexer.listenForNewHandlersAndRoutes()
 
 	return nil
