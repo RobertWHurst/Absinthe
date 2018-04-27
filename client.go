@@ -1,10 +1,13 @@
 package absinthe
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 
-	"github.com/coreos/go-semver/semver"
+	"github.com/davecgh/go-spew/spew"
+
 	"github.com/nats-io/go-nats"
 )
 
@@ -19,17 +22,17 @@ type Client struct {
 
 // Connect creates a new Client using the given Nats url, attempts to make a
 // connection, then returns the connected client
-func Connect(name, version string, url string) *Client {
+func Connect(url string, optionSetters ...Option) (*Client, error) {
 	options := GetDefaultOptions()
-	options.Name = name
-	options.URL = url
 
-	c := &Client{
-		options:    options,
-		descriptor: newClientDescriptor(name, semver.New(version)),
+	for _, optionSetter := range optionSetters {
+		if err := optionSetter(&options); err != nil {
+			return nil, err
+		}
 	}
-	c.connect()
-	return c
+	options.Servers = processUrlString(url)
+
+	return options.Connect()
 }
 
 // Call calls a RPC handler with the given name and arguments
@@ -44,15 +47,7 @@ func (c *Client) Call(name string, in interface{}, out interface{}) error {
 }
 
 func (c *Client) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
-
-}
-
-func (c *Client) subscribe(subj string, cb nats.Handler) (*nats.Subscription, error) {
-	return c.natsConn.Subscribe(c.options.Namespace+subj, cb)
-}
-
-func (c *Client) publish(subj string, v interface{}) error {
-	return c.natsConn.Publish(c.options.Namespace+subj, v)
+	spew.Dump("%+v", c)
 }
 
 func (c *Client) connect() error {
@@ -66,11 +61,40 @@ func (c *Client) connect() error {
 		return err
 	}
 
+	enc.Subscribe("*", func(v *interface{}) {
+		fmt.Println("Message")
+		spew.Dump(v)
+	})
 	c.natsConn = enc
-	c.indexer = indexer{
-		client: c,
-	}
-	go c.indexer.listenForNewHandlersAndRoutes()
+	c.indexer = createIndexer(c)
+	go c.indexer.start()
 
 	return nil
+}
+
+func (c *Client) subscribe(subj string, cb nats.Handler) (*nats.Subscription, error) {
+	return c.natsConn.Subscribe(c.getNamespace()+"."+subj, cb)
+}
+
+func (c *Client) publish(subj string, v interface{}) error {
+	return c.natsConn.Publish(c.getNamespace()+"."+subj, v)
+}
+
+func (c *Client) flush() error {
+	return c.natsConn.Flush()
+}
+
+func (c *Client) getNamespace() string {
+	if len(c.options.Namespace) != 0 {
+		return c.options.Namespace
+	}
+	return "__ABSINTHE__"
+}
+
+func processUrlString(url string) []string {
+	urls := strings.Split(url, ",")
+	for i, s := range urls {
+		urls[i] = strings.TrimSpace(s)
+	}
+	return urls
 }

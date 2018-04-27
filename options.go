@@ -2,7 +2,12 @@ package absinthe
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
 	"time"
+
+	"github.com/coreos/go-semver/semver"
 
 	nats "github.com/nats-io/go-nats"
 )
@@ -19,16 +24,15 @@ type Options struct {
 	// it on the Nats server
 	Name string
 
+	// Version is an optional identifier for the absinthe client used to identify
+	// it on the Nats server
+	Version *semver.Version
+
 	// Namespace is used as a prefix for Nats subjects to scope absinthe specific
 	// messages
 	Namespace string
 
 	// - Nats Options -
-
-	// URL represents a single NATS server url to which the client
-	// will be connecting. If the Servers option is also set, it
-	// then becomes the first server in the Servers array.
-	URL string
 
 	// Servers is a configured set of servers which this client
 	// will use when attempting to connect.
@@ -125,6 +129,8 @@ type Options struct {
 	CustomDialer nats.CustomDialer
 }
 
+type Option func(*Options) error
+
 // GetDefaultOptions returns the default options for absinthe clients
 func GetDefaultOptions() Options {
 	natsOptionDefaults := nats.GetDefaultOptions()
@@ -134,7 +140,6 @@ func GetDefaultOptions() Options {
 		IndexingInterval: interval,
 		Namespace:        "absinthe",
 
-		URL:                 natsOptionDefaults.Url,
 		Servers:             natsOptionDefaults.Servers,
 		NoRandomize:         natsOptionDefaults.NoRandomize,
 		Verbose:             natsOptionDefaults.Verbose,
@@ -164,16 +169,20 @@ func GetDefaultOptions() Options {
 
 // Connect creates a client and connects to nats using the options it is called
 // upon. It then returns the connected client.
-func (o Options) Connect() *Client {
-	c := &Client{options: o}
-	c.connect()
-	return c
+func (o Options) Connect() (*Client, error) {
+	c := &Client{
+		options:    o,
+		descriptor: newClientDescriptor(o.Name, o.Version),
+	}
+	if err := c.connect(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (o Options) getNatsOptions() nats.Options {
 	natsOptions := nats.GetDefaultOptions()
 
-	natsOptions.Url = o.URL
 	natsOptions.Servers = o.Servers
 	natsOptions.NoRandomize = o.NoRandomize
 	natsOptions.Name = o.Name
@@ -202,3 +211,181 @@ func (o Options) getNatsOptions() nats.Options {
 
 	return natsOptions
 }
+
+func Name(name string) Option {
+	return func(o *Options) error {
+		o.Name = name
+		return nil
+	}
+}
+
+func Version(version string) Option {
+	return func(o *Options) error {
+		version, err := semver.NewVersion(version)
+		o.Version = version
+		return err
+	}
+}
+
+func Namespace(namespace string) Option {
+	return func(o *Options) error {
+		o.Namespace = namespace
+		return nil
+	}
+}
+
+func DontRandomize() Option {
+	return func(o *Options) error {
+		o.NoRandomize = true
+		return nil
+	}
+}
+
+func Secure(tls ...*tls.Config) Option {
+	return func(o *Options) error {
+		o.Secure = true
+		if len(tls) > 1 {
+			return nats.ErrMultipleTLSConfigs
+		}
+		if len(tls) == 1 {
+			o.TLSConfig = tls[0]
+		}
+		return nil
+	}
+}
+
+func RootCAs(file ...string) Option {
+	return func(o *Options) error {
+		pool := x509.NewCertPool()
+		for _, f := range file {
+			rootPEM, err := ioutil.ReadFile(f)
+			if err != nil || rootPEM == nil {
+				return fmt.Errorf("absinthe: error loading or parsing rootCA file: %v", err)
+			}
+			ok := pool.AppendCertsFromPEM(rootPEM)
+			if !ok {
+				return fmt.Errorf("absinthe: failed to parse root certificate from %q", f)
+			}
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		o.TLSConfig.RootCAs = pool
+		o.Secure = true
+		return nil
+	}
+}
+
+func ClientCert(certFile, keyFile string) Option {
+	return func(o *Options) error {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return fmt.Errorf("absinthe: error loading client certificate: %v", err)
+		}
+		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("absinthe: error parsing client certificate: %v", err)
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		o.TLSConfig.Certificates = []tls.Certificate{cert}
+		o.Secure = true
+		return nil
+	}
+}
+
+func NoReconnect() Option {
+	return func(o *Options) error {
+		o.AllowReconnect = false
+		return nil
+	}
+}
+
+func ReconnectWait(t time.Duration) Option {
+	return func(o *Options) error {
+		o.ReconnectWait = t
+		return nil
+	}
+}
+
+func MaxReconnects(max int) Option {
+	return func(o *Options) error {
+		o.MaxReconnect = max
+		return nil
+	}
+}
+
+func PingInterval(t time.Duration) Option {
+	return func(o *Options) error {
+		o.PingInterval = t
+		return nil
+	}
+}
+
+func ReconnectBufSize(size int) Option {
+	return func(o *Options) error {
+		o.ReconnectBufSize = size
+		return nil
+	}
+}
+
+func Timeout(t time.Duration) Option {
+	return func(o *Options) error {
+		o.Timeout = t
+		return nil
+	}
+}
+
+func DisconnectHandler(cb nats.ConnHandler) Option {
+	return func(o *Options) error {
+		o.DisconnectedCB = cb
+		return nil
+	}
+}
+
+func ReconnectHandler(cb nats.ConnHandler) Option {
+	return func(o *Options) error {
+		o.ReconnectedCB = cb
+		return nil
+	}
+}
+
+func ClosedHandler(cb nats.ConnHandler) Option {
+	return func(o *Options) error {
+		o.ClosedCB = cb
+		return nil
+	}
+}
+
+// DiscoveredServersHandler is an Option to set the new servers handler.
+func DiscoveredServersHandler(cb nats.ConnHandler) Option {
+	return func(o *Options) error {
+		o.DiscoveredServersCB = cb
+		return nil
+	}
+}
+
+func UserInfo(user, password string) Option {
+	return func(o *Options) error {
+		o.User = user
+		o.Password = password
+		return nil
+	}
+}
+
+func Token(token string) Option {
+	return func(o *Options) error {
+		o.Token = token
+		return nil
+	}
+}
+
+func SetCustomDialer(dialer nats.CustomDialer) Option {
+	return func(o *Options) error {
+		o.CustomDialer = dialer
+		return nil
+	}
+}
+
+const DefaultURL = nats.DefaultURL

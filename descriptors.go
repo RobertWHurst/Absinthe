@@ -11,11 +11,11 @@ import (
 )
 
 type clientDescriptor struct {
-	id                 string
-	version            *semver.Version
-	name               string
-	handlerDescriptors []handlerDescriptor
-	routeDescriptors   []routeDescriptor
+	ID                 string
+	Version            *semver.Version
+	Name               string
+	HandlerDescriptors []handlerDescriptor
+	RouteDescriptors   []routeDescriptor
 }
 
 func newClientDescriptor(name string, version *semver.Version) clientDescriptor {
@@ -35,22 +35,24 @@ func newClientDescriptor(name string, version *semver.Version) clientDescriptor 
 	}
 
 	return clientDescriptor{
-		id:      hex.EncodeToString([]byte(id)),
-		version: version,
-		name:    name,
+		ID:                 hex.EncodeToString([]byte(id)),
+		Version:            version,
+		Name:               name,
+		HandlerDescriptors: make([]handlerDescriptor, 0),
+		RouteDescriptors:   make([]routeDescriptor, 0),
 	}
 }
 
 func (c *clientDescriptor) registerHandler(descriptor handlerDescriptor) {
-	c.handlerDescriptors = append(c.handlerDescriptors, descriptor)
+	c.HandlerDescriptors = append(c.HandlerDescriptors, descriptor)
 }
 
 func (c *clientDescriptor) registerRoute(descriptor routeDescriptor) {
-	c.routeDescriptors = append(c.routeDescriptors, descriptor)
+	c.RouteDescriptors = append(c.RouteDescriptors, descriptor)
 }
 
 func (c *clientDescriptor) testCall(namespace string, inType, outType reflect.Type) bool {
-	for _, descriptor := range c.handlerDescriptors {
+	for _, descriptor := range c.HandlerDescriptors {
 		if descriptor.testCall(namespace, inType, outType) {
 			return true
 		}
@@ -59,7 +61,7 @@ func (c *clientDescriptor) testCall(namespace string, inType, outType reflect.Ty
 }
 
 func (c *clientDescriptor) testRequest() bool {
-	for _, descriptor := range c.routeDescriptors {
+	for _, descriptor := range c.RouteDescriptors {
 		if descriptor.testRequest() {
 			return true
 		}
@@ -68,20 +70,20 @@ func (c *clientDescriptor) testRequest() bool {
 }
 
 type handlerDescriptor struct {
-	namespace string
-	inType    reflect.Type
-	outType   reflect.Type
+	Namespace string
+	InType    reflect.Type
+	OutType   reflect.Type
 }
 
 func (h *handlerDescriptor) testCall(namespace string, inType, outType reflect.Type) bool {
-	return h.namespace == namespace &&
-		h.inType == inType &&
-		h.outType == outType
+	return h.Namespace == namespace &&
+		h.InType == inType &&
+		h.OutType == outType
 }
 
 type routeDescriptor struct {
-	pattern string
-	method  string
+	Pattern string
+	Method  string
 }
 
 func (r *routeDescriptor) testRequest() bool {
