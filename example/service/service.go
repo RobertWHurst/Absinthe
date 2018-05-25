@@ -15,5 +15,10 @@ func main() {
 		panic(err)
 	}
 
+	// abs.Use(func(c *absinthe.RESTContext) {
+	// 	println("here")
+	// 	c.Status(200).End()
+	// })
+
 	select {}
 }

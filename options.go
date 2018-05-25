@@ -170,10 +170,7 @@ func GetDefaultOptions() Options {
 // Connect creates a client and connects to nats using the options it is called
 // upon. It then returns the connected client.
 func (o Options) Connect() (*Client, error) {
-	c := &Client{
-		options:    o,
-		descriptor: newClientDescriptor(o.Name, o.Version),
-	}
+	c := &Client{options: o}
 	if err := c.connect(); err != nil {
 		return nil, err
 	}

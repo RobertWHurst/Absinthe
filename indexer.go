@@ -1,92 +1,95 @@
 package absinthe
 
 import (
-	"reflect"
+	"fmt"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
 )
 
+// DefaultIndexerAnnouceInterval is the interval in number of seconds between
+// each announcement of this client
 const DefaultIndexerAnnouceInterval = 1 * time.Second
 
-type indexer struct {
+// Indexer keeps track of all absinthe instances (using the same namespace) on
+// nats. It also announces the presence of this absinthe instance periotically.
+// The indexer is used to validate rpc and rest requests, as well as obtain a
+// peer to send the request to.
+type Indexer struct {
 	client      *Client
-	isAnouncing bool
+	isRunning   bool
 	stoppedChan chan struct{}
-	descriptor  *clientDescriptor
-	peers       map[string]clientDescriptor
+
+	knownPeers map[string]Peer
+
+	nextKnownPeers map[string]Peer
 }
 
-func createIndexer(client *Client) indexer {
-	return indexer{
-		client:      client,
-		isAnouncing: false,
-		stoppedChan: make(chan struct{}),
-		descriptor:  &client.descriptor,
-		peers:       make(map[string]clientDescriptor),
+func NewIndexer(client *Client) Indexer {
+	return Indexer{
+		client:         client,
+		isRunning:      false,
+		stoppedChan:    make(chan struct{}),
+		knownPeers:     make(map[string]Peer),
+		nextKnownPeers: make(map[string]Peer),
 	}
 }
 
-func (i *indexer) start() {
-	i.isAnouncing = true
-	i.client.subscribe("announce", func(peer clientDescriptor) {
-		i.addPeer(peer)
-	})
-	i.client.subscribe("rescind", func(peer clientDescriptor) {
-		i.removePeerByID(peer.ID)
-	})
-	go func() {
-		for i.isAnouncing {
-			if err := i.client.publish("announce", *i.descriptor); err != nil {
-				panic(err)
+func (i *Indexer) HasRPCHandlerFor(path string) bool {
+	for _, peer := range i.knownPeers {
+		if peer.HasRPCHandlerFor(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *Indexer) HasRestHandlerFor(method, path string) bool {
+	for _, peer := range i.knownPeers {
+		if peer.HasRestHandlerFor(method, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *Indexer) Start() {
+	i.isRunning = true
+
+	i.client.Subscribe("PING", func(requestingPeerID string) {
+		if requestingPeerID != i.client.ID {
+			err := i.client.Publish("PONG-"+requestingPeerID, i.client.Peer)
+			if err != nil {
+				fmt.Println(err)
 			}
-			<-time.After(DefaultIndexerAnnouceInterval)
 		}
-		if err := i.client.publish("rescind", *i.descriptor); err != nil {
-			panic(err)
+	})
+
+	i.client.Subscribe("PONG-"+i.client.ID, func(respondingPeer Peer) {
+		if respondingPeer.ID != i.client.ID {
+			i.knownPeers[respondingPeer.ID] = respondingPeer
+			i.nextKnownPeers[respondingPeer.ID] = respondingPeer
 		}
-		i.stoppedChan <- struct{}{}
-	}()
+	})
+
+	for i.isRunning {
+		i.client.Publish("PING", i.client.ID)
+		<-time.After(DefaultIndexerAnnouceInterval)
+		for k := range i.knownPeers {
+			delete(i.knownPeers, k)
+		}
+		for k := range i.nextKnownPeers {
+			i.knownPeers[k] = i.nextKnownPeers[k]
+		}
+		for k := range i.nextKnownPeers {
+			delete(i.nextKnownPeers, k)
+		}
+		spew.Dump(i.knownPeers)
+	}
+	i.stoppedChan <- struct{}{}
 }
 
-func (i *indexer) stop() {
-	i.isAnouncing = false
+func (i *Indexer) Stop() {
+	i.isRunning = false
 	<-i.stoppedChan
-}
-
-func (i *indexer) addPeer(peer clientDescriptor) {
-	if peer.ID != i.descriptor.ID {
-		i.peers[peer.ID] = peer
-	}
-	spew.Dump(i.peers)
-}
-
-func (i *indexer) removePeerByID(peerID string) {
-	if peerID != i.descriptor.ID {
-		delete(i.peers, peerID)
-	}
-}
-
-func (i *indexer) validateCall(namespace string, inType, outType reflect.Type) bool {
-	if i.descriptor.testCall(namespace, inType, outType) {
-		return true
-	}
-	for _, peer := range i.peers {
-		if peer.testCall(namespace, inType, outType) {
-			return true
-		}
-	}
-	return false
-}
-
-func (i *indexer) validateRequest() bool {
-	if i.descriptor.testRequest() {
-		return true
-	}
-	for _, peer := range i.peers {
-		if peer.testRequest() {
-			return true
-		}
-	}
-	return false
 }
